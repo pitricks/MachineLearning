@@ -1,0 +1,149 @@
+---
+title: "Practical Machine Learning Project"
+output: html_document
+---
+
+The aim of this project is to use the fitness data of six participants to create a machine learning algorithm that can predict the manner in which the exercise took place. This algorithm will then be applied to 20 unknown test cases.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+library(caret)
+set.seed(12345)
+```
+
+## Importing Data
+The raw data for this analysis was supplied in two CSV files. From examining the contents of these files it was found that missing data was represented in two ways; by use of NA, and by the absence of text. Both of these were treated as missing data during the import.
+```{r import}
+Data_Train <- read.csv("pml-training.csv",na.strings = c("NA",""),as.is=TRUE)
+Data_Test <- read.csv("pml-testing.csv",na.strings = c("NA",""),as.is=TRUE)
+```
+
+
+## Feature Selection
+From examining the imported data, it is clear that the first five columns are data related to the user and timestamps of the fitness activities. These were removed as features as they are not output from the accelerometers.
+```{r feature1}
+## Remove the first five features
+Data_Train <- Data_Train[,-(1:5)]
+Data_Test <- Data_Test[,-(1:5)]
+```
+
+Further it was clear from data import that many features had missing data. To determine the extent of this, a count of NA values was done across each feature. It was found that only two unique counts existed.
+```{r feature2}
+## Unique counts of NA values by feature
+unique(apply(Data_Train, 2, function(x) sum(is.na(x))))
+```
+This meant that each feature either had no missing values or had 19216 of them. As the number of rows is `r nrow(Data_Train)`, those features with missing values are predominantly made up of them. As a result, only the features without missing values were kept for this analysis.
+```{r feature3}
+## Keep features without NA values
+ColsWithoutNA <- apply(Data_Train, 2, function(x) !any(is.na(x)))
+Data_Train <- Data_Train[,ColsWithoutNA]
+Data_Test <- Data_Test[,ColsWithoutNA]
+```
+The remaining features were then checked to see if they had near zero variance.
+Any features that fall into that category were removed.
+```{r feature4}
+## Remove features with near zero variance
+nsv <- nearZeroVar(Data_Train)
+Data_Train <- Data_Train[,-nsv]
+Data_Test <- Data_Test[,-nsv]
+```
+Finally, features that have high correlation with other features were also removed.
+```{r feature5}
+## Remove features with high correlations with other predictors
+Data_Corr <- cor(Data_Test)
+High_Corr <- findCorrelation(Data_Corr,0.90)
+Data_Train <- Data_Train[,-High_Corr]
+Data_Test <- Data_Test[,-High_Corr]
+```
+Overall this process has reduced the number of features from 159 down to `r ncol(Data_Train)-1`.
+These are the features that are going to be used to predict the *classe* variable.
+```{r feature6}
+names(Data_Train[,-ncol(Data_Train)])
+```
+
+```{r feature7, echo=FALSE}
+Data_Train$classe <- as.factor(Data_Train$classe)
+```
+
+
+## Training and Testing Sets (Cross Validation)
+The provided testing data set has only 20 entries and does not include the outcome variable.
+To effectively measure the out of sample error, there must be a testing set where the outcome variable is known.
+For this reason, the training set was partitioned into two smaller sets of equal size for a 2-fold cross validation. 
+These sets are `Data_Set1` and `Data_Set2`, and will be used in the Algorithm section.
+
+```{r crossval}
+index <- createDataPartition(y=Data_Train$classe, p=0.5, list=FALSE)
+Data_Set1 <- Data_Train[index,]
+Data_Set2 <- Data_Train[-index,]
+```
+
+
+## Algorithm
+### Classification Tree
+
+As the first step, a classification tree algorithm was applied to `Data_Set1`.
+As part of the pre-process, the features were centred and scaled. 
+Further there was a 4-fold cross validation applied as part of the training process.
+
+```{r tree, results:hide}
+## Classification Tree with Preprocess and Cross Validation
+modFit_Tree <- train(classe ~ ., 
+                   data=Data_Set1,
+                     preProcess=c("center", "scale"),
+                     trControl=trainControl(method = "cv", number = 4),
+                     method="rpart")
+```
+
+The resulting model was then used to make predictions on `Data_Set2`. 
+As shown below, the confusion matrix indicates that a very poor model was achieved.
+In fact, having an accuracy rate near 0.5 is as bad as a prediction could be.
+```{r treepred}
+predictions_Tree <- predict(modFit_Tree, newdata=Data_Set2[,-ncol(Data_Set2)])
+confusion_Tree <- confusionMatrix(predictions_Tree, Data_Set2$classe)
+confusion_Tree$table; confusion_Tree$overall[1]
+```
+
+
+### Random Forest
+As the second model, a random forest algorithm was applied to `Data_Set1`.
+Similarly to before, the predictive features were centred and scaled as part of a pre-process. 
+Further there was a 4-fold cross validation applied as part of the training process.
+
+```{r rf}
+## Random Forest with Preprocess and Cross Validation
+modFit_RF <- train(classe ~ ., 
+                     data=Data_Set1,
+                     preProcess=c("center", "scale"),
+                     trControl=trainControl(method = "cv", number = 4),
+                     method="rf")
+modFit_RF$finalModel
+```
+This has a much improved accuracy.
+We can see that the in-sample error rate is 0.37% in the above output.
+For the out-of-sample error we apply this model to `Data_Set2`.
+The confusion matrix shows that the model is a good fit.
+
+```{r rfpred}
+predictions_RF <- predict(modFit_RF, newdata=Data_Set2[,-ncol(Data_Set2)])
+print(confusionMatrix(predictions_RF, Data_Set2$classe), digits=4)
+```
+Overall we obtain an accuracy of 0.9966.
+This translates to an out-of-sample error rate of 1-0.9966=0.0034 (or 0.34%).
+
+### Out of Sample Error
+
+Using the Random Forest model and the 2-fold cross validation, we can determine estimates of the out-of-sample error.
+* Using `Data_Set1` as training, we obtain an out-of-sample error rate of 0.0034
+* Using `Data_Set2` as training, we obtain an out-of-sample error rate of 0.0032
+Taking the average of these, we estimate the out-of-sample error rate to be 0.0033
+
+
+## Conclusions
+Given this type of data, a strong predictive model can be created using random forest techniques.
+By applying this model to the supplied test data, we can make predictions as to what type of exercise is being done in each test case.
+These are displayed in the supplied order below.
+
+```{r answers}
+predict(modFit_RF,newdata=Data_Test[,-ncol(Data_Test)])
+```
