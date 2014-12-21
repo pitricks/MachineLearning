@@ -147,18 +147,3 @@ These are displayed in the supplied order below.
 ```{r answers}
 predict(modFit_RF,newdata=Data_Test[,-ncol(Data_Test)])
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
